@@ -1871,6 +1871,133 @@ static PyObject *ddspy_get_typeobj (PyObject *self, PyObject *args)
   return typeobj_cdr;
 }
 
+static PyObject *ddspy_get_endpoint_typeinfo(PyObject *self, PyObject *args)
+{
+  dds_entity_t participant;
+  Py_buffer type_id_buffer;
+  dds_istream_t type_id_stream;
+  dds_typeid_t *type_id = NULL;
+  dds_typeobj_t *type_obj = NULL;
+  dds_duration_t timeout;
+  dds_return_t sts = DDS_RETCODE_ERROR;
+  PyObject *topic_name_obj = NULL;
+  PyObject *type_name_obj = NULL;
+
+  (void)self;
+
+  if (!PyArg_ParseTuple(args, "iy*LOO", &participant, &type_id_buffer, &timeout, 
+                        &topic_name_obj, &type_name_obj))
+    return NULL;
+
+  type_id_stream.m_buffer = type_id_buffer.buf;
+  type_id_stream.m_size = (uint32_t)type_id_buffer.len;
+  type_id_stream.m_index = 0;
+  type_id_stream.m_xcdr_version = DDSI_RTPS_CDR_ENC_VERSION_2;
+
+  typeid_deser(&type_id_stream, &type_id);
+  PyBuffer_Release(&type_id_buffer);
+
+  if (type_id == NULL) {
+    PyErr_SetString(PyExc_ValueError, "Failed to deserialize TypeIdentifier");
+    return NULL;
+  }
+
+  Py_BEGIN_ALLOW_THREADS
+  sts = dds_get_typeobj(participant, type_id, timeout, &type_obj);
+  Py_END_ALLOW_THREADS
+
+  if (sts < 0 || type_obj == NULL) {
+    dds_free(type_id);
+    if (sts < 0) {
+      PyErr_Format(PyExc_RuntimeError, "Failed to get TypeObject: %d", (int)sts);
+      return NULL;
+    }
+    PyErr_SetString(PyExc_RuntimeError, "TypeObject is NULL");
+    return NULL;
+  }
+
+  // Serialize TypeObject
+  dds_ostream_t type_obj_stream;
+  dds_ostream_init(&type_obj_stream, &cdrstream_allocator, 0, DDSI_RTPS_CDR_ENC_VERSION_2);
+  typeobj_ser(&type_obj_stream, type_obj);
+
+  // Serialize TypeIdentifier
+  dds_ostream_t type_id_out_stream;
+  dds_ostream_init(&type_id_out_stream, &cdrstream_allocator, 0, DDSI_RTPS_CDR_ENC_VERSION_2);
+  typeid_ser(&type_id_out_stream, type_id);
+
+  PyObject *result = Py_BuildValue(
+    "{s:y#,s:y#,s:O,s:O}",
+    "type_id", type_id_out_stream.m_buffer, type_id_out_stream.m_index,
+    "type_object", type_obj_stream.m_buffer, type_obj_stream.m_index,
+    "topic_name", topic_name_obj,
+    "type_name", type_name_obj
+  );
+
+  dds_ostream_fini(&type_obj_stream, &cdrstream_allocator);
+  dds_ostream_fini(&type_id_out_stream, &cdrstream_allocator);
+  dds_free_typeobj(type_obj);
+  dds_free(type_id);
+
+  if (PyErr_Occurred() || result == NULL) {
+    Py_XDECREF(result);
+    return NULL;
+  }
+
+  return result;
+}
+
+static PyObject *ddspy_typeobj_to_idl(PyObject *self, PyObject *args)
+{
+  Py_buffer type_id_buffer;
+  Py_buffer type_obj_buffer;
+  PyObject *typemap_dict = NULL;
+  dds_istream_t type_id_stream;
+  dds_istream_t type_obj_stream;
+  dds_typeid_t *type_id = NULL;
+  dds_typeobj_t *type_obj = NULL;
+
+  (void)self;
+
+  if (!PyArg_ParseTuple(args, "y*y*O", &type_id_buffer, &type_obj_buffer, &typemap_dict))
+    return NULL;
+
+  // Deserialize TypeIdentifier
+  type_id_stream.m_buffer = type_id_buffer.buf;
+  type_id_stream.m_size = (uint32_t)type_id_buffer.len;
+  type_id_stream.m_index = 0;
+  type_id_stream.m_xcdr_version = DDSI_RTPS_CDR_ENC_VERSION_2;
+  typeid_deser(&type_id_stream, &type_id);
+  PyBuffer_Release(&type_id_buffer);
+
+  // Deserialize TypeObject
+  type_obj_stream.m_buffer = type_obj_buffer.buf;
+  type_obj_stream.m_size = (uint32_t)type_obj_buffer.len;
+  type_obj_stream.m_index = 0;
+  type_obj_stream.m_xcdr_version = DDSI_RTPS_CDR_ENC_VERSION_2;
+
+  type_obj = dds_alloc(sizeof(DDS_XTypes_TypeObject));
+  dds_stream_read(&type_obj_stream, (void *)type_obj, &cdrstream_allocator, DDS_XTypes_TypeObject_desc.m_ops);
+  PyBuffer_Release(&type_obj_buffer);
+
+  if (type_id == NULL || type_obj == NULL) {
+    PyErr_SetString(PyExc_ValueError, "Failed to deserialize TypeIdentifier or TypeObject");
+    dds_free(type_id);
+    dds_free(type_obj);
+    return NULL;
+  }
+
+  // For now, return a simple error message indicating this is a placeholder
+  // A full implementation would require IDL generation logic from TypeObject
+  PyErr_SetString(PyExc_NotImplementedError, 
+    "IDL generation from TypeObject is not yet fully implemented in C. "
+    "Please use the Python implementation (IdlType.idl) for now.");
+
+  dds_free(type_id);
+  dds_free(type_obj);
+  return NULL;
+}
+
 #endif
 
 static PyObject *
@@ -1958,6 +2085,8 @@ PyMethodDef ddspy_funcs[] = {
   { "ddspy_take_topic", (PyCFunction)ddspy_take_topic, METH_VARARGS, ddspy_docs },
 #ifdef DDS_HAS_TYPE_DISCOVERY
   { "ddspy_get_typeobj", (PyCFunction)ddspy_get_typeobj, METH_VARARGS, ddspy_docs },
+  { "ddspy_get_endpoint_typeinfo", (PyCFunction)ddspy_get_endpoint_typeinfo, METH_VARARGS, ddspy_docs },
+  { "ddspy_typeobj_to_idl", (PyCFunction)ddspy_typeobj_to_idl, METH_VARARGS, ddspy_docs },
 #endif
   { "ddspy_get_matched_subscription_data", (PyCFunction)ddspy_get_matched_subscription_data, METH_VARARGS, ddspy_docs },
   { "ddspy_get_matched_publication_data", (PyCFunction)ddspy_get_matched_publication_data, METH_VARARGS, ddspy_docs },
