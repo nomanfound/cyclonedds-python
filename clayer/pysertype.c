@@ -1885,7 +1885,7 @@ static PyObject *ddspy_get_endpoint_typeinfo(PyObject *self, PyObject *args)
 
   (void)self;
 
-  if (!PyArg_ParseTuple(args, "iy*LSSO", &participant, &type_id_buffer, &timeout, 
+  if (!PyArg_ParseTuple(args, "iy*LOO", &participant, &type_id_buffer, &timeout, 
                         &topic_name_obj, &type_name_obj))
     return NULL;
 

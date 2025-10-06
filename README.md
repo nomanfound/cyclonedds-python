@@ -102,6 +102,23 @@ The `typeof` subcommand shows you the type(s) of a topic in your system. With XT
 
 ![`cyclonedds typeof Vehicle --suppress-progress-bar --force-color-mode`](docs/manual/static/images/cyclonedds-typeof-demo.svg)
 
+You can also use the Python API to discover types from endpoints programmatically:
+
+```python
+from cyclonedds import domain, builtin, util
+from cyclonedds.type_discovery_c import get_idl_from_endpoint
+
+dp = domain.DomainParticipant()
+pub_reader = builtin.BuiltinDataReader(dp, builtin.BuiltinTopicDcpsPublication)
+
+for pub in pub_reader.take(N=10):
+    if pub.type_id is not None:
+        idl = get_idl_from_endpoint(dp, pub, util.duration(seconds=1))
+        print(f"Topic: {pub.topic_name}\n{idl}")
+```
+
+See [Type Discovery Usage Guide](docs/type_discovery_usage_guide.md) for more examples.
+
 ## `cyclonedds subscribe`
 
 ![`cyclonedds subscribe --help`](docs/manual/static/images/cyclonedds-subscribe-help.svg)
